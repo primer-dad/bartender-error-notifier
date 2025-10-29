@@ -4,6 +4,7 @@ import requests
 from flask import Flask, request, jsonify
 from google.cloud import pubsub_v1
 import functions_framework
+import base64
 
 app = Flask(__name__)
 
@@ -14,6 +15,8 @@ chat_webhook_url = "https://chat.googleapis.com/v1/spaces/AAQAv2hHlVo/messages?k
 # ----------------------------------------------------
 # Function to send message to Google Chat
 # ----------------------------------------------------
+
+
 def send_to_google_chat(log_entry):
     try:
         param = log_entry.get("httpRequest", {}).get("requestUrl", "N/A")

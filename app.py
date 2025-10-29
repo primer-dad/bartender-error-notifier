@@ -95,5 +95,5 @@ def start_service():
 if __name__ == "__main__":
     # Start subscriber in background
     threading.Thread(target=start_subscriber, daemon=True).start()
-    # app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
     app.run(debug=True)

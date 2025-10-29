@@ -1,10 +1,9 @@
 import os
-import time
 import json
-import threading
 import requests
-from flask import Flask, jsonify
+from flask import Flask, request, jsonify
 from google.cloud import pubsub_v1
+import functions_framework
 
 app = Flask(__name__)
 
@@ -12,22 +11,14 @@ project_id = "pgc-one-primer-dw"
 subscription_id = "bartender-error-notifier-sub"
 chat_webhook_url = "https://chat.googleapis.com/v1/spaces/AAQAv2hHlVo/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=26B8Ir5zpHiqhNIYD6wFFa9fk7ruoS-_70aaNsvKyqA"
 
-subscriber = pubsub_v1.SubscriberClient()
-subscription_path = subscriber.subscription_path(project_id, subscription_id)
-
-# ------------------------------
-# Google Chat notification logic
-# ------------------------------
-
-
+# ----------------------------------------------------
+# Function to send message to Google Chat
+# ----------------------------------------------------
 def send_to_google_chat(log_entry):
     try:
         param = log_entry.get("httpRequest", {}).get("requestUrl", "N/A")
-        param_val = param.rsplit("/", 1)[-1]
-        print(param_val)
-
+        param_val = param.rsplit("/", 1)[-1] if "/" in param else "N/A"
         final_param = param_val.split("?", 1)[1] if "?" in param_val else "N/A"
-        print(final_param)
 
         text = (
             "🚨 *404 API Log Detected!*\n"
@@ -48,52 +39,62 @@ def send_to_google_chat(log_entry):
         print(f"⚠️ Error sending message to Chat: {e}")
 
 
-# ------------------------------
-# Pub/Sub message processing
-# ------------------------------
-def callback(message):
+# ----------------------------------------------------
+# Cloud Function (Triggered by Pub/Sub)
+# ----------------------------------------------------
+@functions_framework.cloud_event
+def pubsub_handler(cloud_event):
+    """
+    Cloud Run entrypoint for Pub/Sub-triggered events.
+    """
     try:
-        data = json.loads(message.data.decode("utf-8"))
-        http_request = data.get("httpRequest", {})
+        message_data = cloud_event.data.get("message", {}).get("data")
+        if not message_data:
+            print("⚠️ No data in message.")
+            return
+
+        decoded = json.loads(base64.b64decode(message_data).decode("utf-8"))
+        http_request = decoded.get("httpRequest", {})
         status = http_request.get("status")
 
         if status == 404:
             print("🚨 404 Log Entry Detected!")
-            send_to_google_chat(data)
+            send_to_google_chat(decoded)
+        else:
+            print(f"Ignored non-404 log (status: {status})")
+
     except Exception as e:
-        print(f"⚠️ Error parsing message: {e}")
-    finally:
-        message.ack()
+        print(f"⚠️ Error processing Pub/Sub message: {e}")
 
 
-def start_subscriber():
-    print("🚀 Starting Pub/Sub subscriber...")
-    subscriber.subscribe(subscription_path, callback=callback)
-    while True:
-        time.sleep(60)
-
-
-# ------------------------------
-# Flask endpoints for Cloud Run
-# ------------------------------
+# ----------------------------------------------------
+# Optional Flask endpoints (for health check & debug)
+# ----------------------------------------------------
 @app.route("/")
 def home():
-    return jsonify({"status": "running", "message": "Bartender Notifier Service active."})
+    return jsonify({"status": "ok", "message": "Bartender Notifier is running."})
 
 
-@app.route("/start", methods=["POST"])
-def start_service():
-    """Manually start subscriber (optional endpoint)"""
-    thread = threading.Thread(target=start_subscriber, daemon=True)
-    thread.start()
-    return jsonify({"status": "subscriber started"})
+@app.route("/test", methods=["POST"])
+def test_message():
+    """
+    Local test endpoint — send a fake 404 log to Chat.
+    """
+    mock_log = {
+        "httpRequest": {
+            "requestUrl": "https://api.example.com/test?id=123",
+            "status": 404,
+            "requestMethod": "GET",
+        },
+        "resource": {"labels": {"service_name": "mock-service"}},
+        "timestamp": "2025-10-29T00:00:00Z",
+    }
+    send_to_google_chat(mock_log)
+    return jsonify({"status": "sent"})
 
 
-# ------------------------------
-# Run Flask app
-# ------------------------------
+# ----------------------------------------------------
+# Entry point for local testing
+# ----------------------------------------------------
 if __name__ == "__main__":
-    # Start subscriber in background
-    threading.Thread(target=start_subscriber, daemon=True).start()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
-    #app.run(debug=True)
